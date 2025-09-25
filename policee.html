@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>3D Cop Simulator</title>
+  <style>
+    body { margin: 0; overflow: hidden; background: #222; }
+    #overlay {
+      position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+      background: rgba(0,0,0,0.8); color: #fff; display: flex;
+      align-items: center; justify-content: center; font-size: 2em; z-index: 10;
+      cursor: pointer;
+      flex-direction: column;
+    }
+    #message {
+      position: fixed; top: 40px; width: 100vw; text-align: center; font-size: 2em;
+      color: #fff; z-index: 12; pointer-events: none;
+      text-shadow: 0 0 10px #000, 0 0 20px #000;
+    }
+    #crosshair {
+      position: fixed; left: 50vw; top: 50vh; width: 20px; height: 20px;
+      margin-left: -10px; margin-top: -10px; z-index: 5;
+      pointer-events: none;
+    }
+    #crosshair:before, #crosshair:after {
+      content: '';
+      position: absolute;
+      background: #fff;
+    }
+    #crosshair:before {
+      left: 9px; top: 0; width: 2px; height: 20px;
+    }
+    #crosshair:after {
+      top: 9px; left: 0; width: 20px; height: 2px;
+    }
+  </style>
+</head>
+<body>
+  <div id="overlay">Click to Start Patrol<br><span style="font-size:0.6em;">WASD to move, Mouse to look, Click NPCs to check ID</span></div>
+  <div id="message">Patrol the city and check NPCs by clicking them.</div>
+  <div id="crosshair"></div>
+  <script src="three.min.js"></script>
+  <script src="PointerLockControls.js"></script>
+  <script>
+    let camera, scene, renderer, controls;
+    let move = { forward: false, backward: false, left: false, right: false };
+    let velocity = new THREE.Vector3();
+    let npcs = [];
+    let overlay = document.getElementById('overlay');
+    let message = document.getElementById('message');
+
+    function init() {
+      camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 100);
+      camera.position.set(0, 1.7, 10);
+
+      scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x222233);
+
+      // Ground
+      let ground = new THREE.Mesh(
+        new THREE.PlaneGeometry(40, 40),
+        new THREE.MeshPhongMaterial({ color: 0x444444 })
+      );
+      ground.rotation.x = -Math.PI/2;
+      ground.receiveShadow = true;
+      scene.add(ground);
+
+      // Simple buildings
+      for (let i = -2; i <= 2; i++) {
+        for (let j = -2; j <= 2; j++) {
+          if (i === 0 && j === 0) continue;
+          let bGeo = new THREE.BoxGeometry(3, Math.random()*3+3, 3);
+          let bMat = new THREE.MeshPhongMaterial({ color: 0x888888 + Math.floor(Math.random()*0x444444) });
+          let bldg = new THREE.Mesh(bGeo, bMat);
+          bldg.position.set(i*8, bGeo.parameters.height/2, j*8);
+          scene.add(bldg);
+        }
+      }
+
+      // NPCs (simple colored capsules)
+      for (let i = 0; i < 7; i++) {
+        let npc = new THREE.Mesh(
+          new THREE.CapsuleGeometry(0.4, 1.2, 4, 8),
+          new THREE.MeshPhongMaterial({ color: 0x2266ff + Math.floor(Math.random()*0x333333) })
+        );
+        npc.position.set(
+          (Math.random()-0.5)*30,
+          1.2,
+          (Math.random()-0.5)*30
+        );
+        npc.userData.checked = false;
+        scene.add(npc);
+        npcs.push(npc);
+      }
+
+      // Lighting
+      let ambient = new THREE.AmbientLight(0xffffff, 0.5);
+      scene.add(ambient);
+      let dirLight = new THREE.DirectionalLight(0xffffff, 0.7);
+      dirLight.position.set(10, 20, 10);
+      scene.add(dirLight);
+
+      // Renderer
+      renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      document.body.appendChild(renderer.domElement);
+
+      // Controls
+      controls = new THREE.PointerLockControls(camera, document.body);
+
+      overlay.onclick = () => controls.lock();
+      controls.addEventListener('lock', () => { overlay.style.display = 'none'; });
+      controls.addEventListener('unlock', () => { overlay.style.display = 'flex'; });
+
+      scene.add(controls.getObject());
+
+      // Movement
+      document.addEventListener('keydown', e => {
+        if (e.code === 'KeyW') move.forward = true;
+        if (e.code === 'KeyS') move.backward = true;
+        if (e.code === 'KeyA') move.left = true;
+        if (e.code === 'KeyD') move.right = true;
+      });
+      document.addEventListener('keyup', e => {
+        if (e.code === 'KeyW') move.forward = false;
+        if (e.code === 'KeyS') move.backward = false;
+        if (e.code === 'KeyA') move.left = false;
+        if (e.code === 'KeyD') move.right = false;
+      });
+
+      // Mouse click to check NPCs
+      document.addEventListener('mousedown', () => {
+        if (!controls.isLocked) return;
+        let raycaster = new THREE.Raycaster();
+        raycaster.setFromCamera({ x: 0, y: 0 }, camera);
+        let hits = raycaster.intersectObjects(npcs);
+        if (hits.length > 0) {
+          let npc = hits[0].object;
+          if (!npc.userData.checked) {
+            npc.material.color.set(0x00ff00);
+            npc.userData.checked = true;
+            message.textContent = "NPC checked! (" + npcs.filter(n=>n.userData.checked).length + "/" + npcs.length + ")";
+          }
+        }
+      });
+
+      animate();
+    }
+
+    function animate() {
+      requestAnimationFrame(animate);
+
+      if (controls.isLocked) {
+        let speed = 0.11;
+        velocity.set(0, 0, 0);
+        if (move.forward) velocity.z -= speed;
+        if (move.backward) velocity.z += speed;
+        if (move.left) velocity.x -= speed;
+        if (move.right) velocity.x += speed;
+        controls.moveRight(velocity.x);
+        controls.moveForward(velocity.z);
+
+        // Prevent leaving map
+        let pos = controls.getObject().position;
+        pos.x = Math.max(-19, Math.min(19, pos.x));
+        pos.z = Math.max(-19, Math.min(19, pos.z));
+        pos.y = 1.7;
+      }
+
+      renderer.render(scene, camera);
+    }
+
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    // Add crosshair
+    const crosshair = document.createElement('div');
+    crosshair.id = "crosshair";
+    crosshair.innerHTML = `
+      <div style="position:absolute;left:9px;top:0;width:2px;height:20px;background:#fff"></div>
+      <div style="position:absolute;top:9px;left:0;width:20px;height:2px;background:#fff"></div>
+    `;
+    document.body.appendChild(crosshair);
+
+    init();
+  </script>
+</body>
+</html>
